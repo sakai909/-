@@ -1,201 +1,306 @@
-
-<style>
-  .ms-wrap { padding: 1.5rem 0; font-family: var(--font-mono); }
-  .ms-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
-  .ms-stats { display: flex; gap: 16px; }
-  .ms-stat { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 6px 14px; font-size: 13px; color: var(--color-text-secondary); display: flex; align-items: center; gap: 6px; }
-  .ms-stat span { font-size: 15px; font-weight: 500; color: var(--color-text-primary); }
-  .ms-reset-btn { background: transparent; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 6px 14px; cursor: pointer; font-size: 13px; color: var(--color-text-primary); }
-  .ms-reset-btn:hover { background: var(--color-background-secondary); }
-  .ms-board { display: inline-grid; gap: 2px; background: var(--color-border-tertiary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md); padding: 2px; user-select: none; }
-  .ms-board-wrap { overflow-x: auto; }
-  .ms-cell { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 4px; background: var(--color-background-secondary); transition: background 0.1s; position: relative; }
-  .ms-cell:hover.unrevealed { background: var(--color-background-primary); border: 0.5px solid var(--color-border-secondary); }
-  .ms-cell.revealed { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); cursor: default; }
-  .ms-cell.flagged { background: var(--color-background-secondary); }
-  .ms-cell.mine-hit { background: #FCEBEB; }
-  .ms-cell.mine-shown { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); }
-  .n1 { color: #185FA5; } .n2 { color: #3B6D11; } .n3 { color: #993C1D; }
-  .n4 { color: #3C3489; } .n5 { color: #993556; } .n6 { color: #0F6E56; }
-  .n7 { color: #5F5E5A; } .n8 { color: #2C2C2A; }
-  .ms-message { margin-top: 1rem; padding: 10px 16px; border-radius: var(--border-radius-md); font-size: 14px; }
-  .ms-message.win { background: #EAF3DE; color: #3B6D11; }
-  .ms-message.lose { background: #FCEBEB; color: #A32D2D; }
-  .ms-diff { display: flex; gap: 8px; margin-bottom: 1rem; }
-  .ms-diff button { background: transparent; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 4px 12px; font-size: 12px; cursor: pointer; color: var(--color-text-secondary); }
-  .ms-diff button.active { background: var(--color-background-secondary); color: var(--color-text-primary); border-color: var(--color-border-primary); }
-</style>
-
-<div class="ms-wrap">
-  <h2 class="sr-only">지뢰찾기 게임</h2>
-  <div class="ms-diff" id="diffBtns">
-    <button class="active" onclick="setDiff(0)">쉬움 9×9</button>
-    <button onclick="setDiff(1)">보통 16×16</button>
-    <button onclick="setDiff(2)">어려움 16×30</button>
-  </div>
-  <div class="ms-header">
-    <div class="ms-stats">
-      <div class="ms-stat"><i class="ti ti-bomb" aria-hidden="true"></i><span id="mineCount">10</span></div>
-      <div class="ms-stat"><i class="ti ti-clock" aria-hidden="true"></i><span id="timer">0</span>s</div>
-      <div class="ms-stat"><i class="ti ti-flag" aria-hidden="true"></i><span id="flagCount">0</span></div>
-    </div>
-    <button class="ms-reset-btn" onclick="initGame()"><i class="ti ti-refresh" aria-hidden="true"></i> 새 게임</button>
-  </div>
-  <div class="ms-board-wrap">
-    <div class="ms-board" id="board"></div>
-  </div>
-  <div class="ms-message" id="message" style="display:none"></div>
-</div>
-
-<script>
-const DIFFS = [
-  { rows: 9, cols: 9, mines: 10 },
-  { rows: 16, cols: 16, mines: 40 },
-  { rows: 16, cols: 30, mines: 99 },
-];
-let diff = 0, rows, cols, totalMines;
-let board = [], revealed = [], flagged = [], minePos = new Set();
-let gameOver = false, firstClick = true, timerInterval = null, seconds = 0, flagsPlaced = 0;
-
-function setDiff(d) {
-  diff = d;
-  document.querySelectorAll('#diffBtns button').forEach((b, i) => b.classList.toggle('active', i === d));
-  initGame();
-}
-
-function initGame() {
-  clearInterval(timerInterval);
-  const cfg = DIFFS[diff];
-  rows = cfg.rows; cols = cfg.cols; totalMines = cfg.mines;
-  board = Array.from({length: rows}, () => Array(cols).fill(0));
-  revealed = Array.from({length: rows}, () => Array(cols).fill(false));
-  flagged = Array.from({length: rows}, () => Array(cols).fill(false));
-  minePos = new Set();
-  gameOver = false; firstClick = true; seconds = 0; flagsPlaced = 0;
-  document.getElementById('timer').textContent = '0';
-  document.getElementById('mineCount').textContent = totalMines;
-  document.getElementById('flagCount').textContent = '0';
-  document.getElementById('message').style.display = 'none';
-  renderBoard();
-}
-
-function placeMines(sr, sc) {
-  while (minePos.size < totalMines) {
-    const r = Math.floor(Math.random() * rows);
-    const c = Math.floor(Math.random() * cols);
-    if (Math.abs(r - sr) <= 1 && Math.abs(c - sc) <= 1) continue;
-    minePos.add(r * cols + c);
-  }
-  for (const pos of minePos) {
-    const r = Math.floor(pos / cols), c = pos % cols;
-    board[r][c] = -1;
-  }
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    if (board[r][c] === -1) continue;
-    let cnt = 0;
-    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-      const nr = r + dr, nc = c + dc;
-      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === -1) cnt++;
-    }
-    board[r][c] = cnt;
-  }
-}
-
-function startTimer() {
-  timerInterval = setInterval(() => {
-    seconds++;
-    document.getElementById('timer').textContent = seconds;
-  }, 1000);
-}
-
-function reveal(r, c) {
-  if (r < 0 || r >= rows || c < 0 || c >= cols || revealed[r][c] || flagged[r][c]) return;
-  revealed[r][c] = true;
-  if (board[r][c] === 0) {
-    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) reveal(r + dr, c + dc);
-  }
-}
-
-function handleClick(r, c) {
-  if (gameOver || revealed[r][c] || flagged[r][c]) return;
-  if (firstClick) {
-    firstClick = false;
-    placeMines(r, c);
-    startTimer();
-  }
-  if (board[r][c] === -1) {
-    revealed[r][c] = true;
-    endGame(false, r, c);
-    return;
-  }
-  reveal(r, c);
-  checkWin();
-  renderBoard();
-}
-
-function handleRight(e, r, c) {
-  e.preventDefault();
-  if (gameOver || revealed[r][c]) return;
-  flagged[r][c] = !flagged[r][c];
-  flagsPlaced += flagged[r][c] ? 1 : -1;
-  document.getElementById('flagCount').textContent = flagsPlaced;
-  document.getElementById('mineCount').textContent = totalMines - flagsPlaced;
-  renderBoard();
-}
-
-function checkWin() {
-  let safe = 0;
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (revealed[r][c]) safe++;
-  if (safe === rows * cols - totalMines) endGame(true);
-}
-
-function endGame(win, hr, hc) {
-  gameOver = true;
-  clearInterval(timerInterval);
-  if (!win) {
-    for (const pos of minePos) {
-      const r = Math.floor(pos / cols), c = pos % cols;
-      revealed[r][c] = true;
-    }
-  }
-  renderBoard(win ? null : { r: hr, c: hc });
-  const msg = document.getElementById('message');
-  msg.style.display = 'block';
-  msg.className = 'ms-message ' + (win ? 'win' : 'lose');
-  msg.textContent = win ? `🎉 클리어! ${seconds}초 만에 성공했습니다!` : '💥 지뢰를 밟았습니다! 다시 도전해보세요.';
-}
-
-function renderBoard(hitCell) {
-  const el = document.getElementById('board');
-  el.style.gridTemplateColumns = `repeat(${cols}, 32px)`;
-  el.innerHTML = '';
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    const cell = document.createElement('div');
-    cell.className = 'ms-cell';
-    const isHit = hitCell && hitCell.r === r && hitCell.c === c;
-    if (revealed[r][c]) {
-      if (board[r][c] === -1) {
-        cell.classList.add(isHit ? 'mine-hit' : 'mine-shown');
-        cell.textContent = '💣';
-      } else {
-        cell.classList.add('revealed');
-        if (board[r][c] > 0) {
-          cell.textContent = board[r][c];
-          cell.classList.add('n' + board[r][c]);
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>이석환 | 부동산 마케팅 및 기획관리 포트폴리오</title>
+    <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #1E3A8A; /* 신뢰감을 주는 네이비 */
+            --secondary-color: #3B82F6;
+            --text-main: #333333;
+            --text-light: #666666;
+            --bg-light: #F8FAFC;
+            --white: #FFFFFF;
         }
-      }
-    } else if (flagged[r][c]) {
-      cell.classList.add('flagged', 'unrevealed');
-      cell.textContent = '🚩';
-    } else {
-      cell.classList.add('unrevealed');
-    }
-    const rr = r, cc = c;
-    cell.addEventListener('click', () => handleClick(rr, cc));
-    cell.addEventListener('contextmenu', (e) => handleRight(e, rr, cc));
-    el.appendChild(cell);
-  }
-}
 
-initGame();
-</script>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+        }
+
+        body {
+            color: var(--text-main);
+            line-height: 1.6;
+            background-color: var(--bg-light);
+        }
+
+        /* Header / Hero Section */
+        header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #172554 100%);
+            color: var(--white);
+            padding: 100px 20px;
+            text-align: center;
+        }
+
+        .hero-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+
+        .hero-subtitle {
+            font-size: 1.2rem;
+            font-weight: 300;
+            opacity: 0.9;
+            margin-bottom: 30px;
+        }
+
+        .contact-badges {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        /* Main Content Container */
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        section {
+            margin-bottom: 60px;
+            background: var(--white);
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 30px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--bg-light);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Profile & About */
+        .profile-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-label {
+            font-size: 0.85rem;
+            color: var(--text-light);
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        /* Core Competencies */
+        .skills-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .skill-card {
+            padding: 20px;
+            background: var(--bg-light);
+            border-radius: 8px;
+            border-left: 4px solid var(--secondary-color);
+        }
+
+        .skill-title {
+            font-weight: 700;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+
+        .skill-desc {
+            font-size: 0.95rem;
+            color: var(--text-light);
+        }
+
+        /* Projects */
+        .project-card {
+            border: 1px solid #E2E8F0;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .project-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(0,0,0,0.1);
+        }
+
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .project-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .project-link {
+            display: inline-block;
+            background: var(--secondary-color);
+            color: var(--white);
+            padding: 6px 15px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .project-link:hover {
+            background: var(--primary-color);
+        }
+
+        .project-details {
+            list-style-type: disc;
+            margin-left: 20px;
+            color: var(--text-light);
+            font-size: 0.95rem;
+        }
+
+        .project-details li {
+            margin-bottom: 8px;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-light);
+            font-size: 0.9rem;
+            background: var(--white);
+            border-top: 1px solid #E2E8F0;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            header { padding: 60px 20px; }
+            .hero-title { font-size: 2rem; }
+            section { padding: 25px; }
+            .project-header { flex-direction: column; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1 class="hero-title">이석환 (Lee Seok-hwan)</h1>
+        <p class="hero-subtitle">데이터와 공간을 연결하는 부동산 기획·마케팅 전문가</p>
+        <div class="contact-badges">
+            <div class="badge"><i class="fas fa-building"></i> (주)허브파트너스 기획관리 차장</div>
+            <div class="badge"><i class="fas fa-envelope"></i> sakai909@naver.com</div>
+            <div class="badge"><i class="fas fa-briefcase"></i> 경력 6년</div>
+        </div>
+    </header>
+
+    <div class="container">
+        
+        <section id="about">
+            <h2 class="section-title"><i class="fas fa-user-tie"></i> Profile</h2>
+            <div class="profile-grid">
+                <div class="info-item">
+                    <span class="info-label">출생</span>
+                    <span class="info-value">1980년</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">학력</span>
+                    <span class="info-value">학사 졸업</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">주요 직무</span>
+                    <span class="info-value">부동산 마케팅 대행 및 기획 관리</span>
+                </div>
+            </div>
+            <p style="margin-top: 25px; color: var(--text-light); font-size: 1.05rem;">
+                주거 및 상업 시설의 성공적인 분양을 위한 사업 수지 분석, 분양 대행 제안, 그리고 시장 트렌드 리서치를 수행합니다. 정확한 데이터 분석을 바탕으로 최적의 세일즈 전략을 수립합니다.
+            </p>
+        </section>
+
+        <section id="skills">
+            <h2 class="section-title"><i class="fas fa-chart-line"></i> Core Competencies</h2>
+            <div class="skills-grid">
+                <div class="skill-card">
+                    <div class="skill-title">부동산 마케팅 기획</div>
+                    <div class="skill-desc">거시 경제, 금리, 정책 변화 등 마크로 지표 분석을 통한 분양 시기 산정 및 층별 MD 구성 제안</div>
+                </div>
+                <div class="skill-card">
+                    <div class="skill-title">데이터 대시보드 구축</div>
+                    <div class="skill-desc">공공데이터 포털 API 연동을 통한 청약 정보 시각화 및 데이터 기반의 인사이트 도출</div>
+                </div>
+                <div class="skill-card">
+                    <div class="skill-title">3D 시각화 및 공간 기획 검토</div>
+                    <div class="skill-desc">2D 평면도를 기반으로 한 정밀한 3D 아이소메트릭 렌더링 검토 및 주거 편의성을 고려한 구조적 오류 개선</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="projects">
+            <h2 class="section-title"><i class="fas fa-project-diagram"></i> Key Projects</h2>
+            
+            <div class="project-card" style="border-left: 4px solid var(--primary-color);">
+                <div class="project-header">
+                    <div class="project-title">공공데이터 포털 활용 청약 대시보드 개발</div>
+                    <a href="https://cheongyak-dashboard.-opal.vercel.app" target="_blank" class="project-link"><i class="fas fa-external-link-alt"></i> 대시보드 보기</a>
+                </div>
+                <ul class="project-details">
+                    <li>공공데이터 API를 활용하여 실시간 청약 일정을 한눈에 파악할 수 있는 웹 대시보드 구축</li>
+                    <li>분양을 준비하는 수요자와 마케팅 실무자가 직관적으로 정보를 확인할 수 있도록 UI/UX 설계</li>
+                    <li>데이터 수집 및 시각화 역량을 접목한 프롭테크(Proptech) 프로젝트</li>
+                </ul>
+            </div>
+
+            <div class="project-card">
+                <div class="project-header">
+                    <div class="project-title">고급 주거시설 및 상업시설 분양 기획</div>
+                </div>
+                <ul class="project-details">
+                    <li><strong>평창동 고급 단독주택:</strong> 22세대 규모의 단지형 하우스 개발 및 단지 분할 매각 사업계획 기획</li>
+                    <li><strong>갈산동 주상복합:</strong> 81세대 규모의 분양 타당성 조사 및 적정 분양가 산출 리서치 수행</li>
+                    <li><strong>명동 호텔 및 상업시설:</strong> 보타닉 세운명동 분양 대행 제안서 작성 및 세일즈 전략 수립</li>
+                    <li><strong>경안지구 상업시설:</strong> 거시 경제 및 금리 동향에 따른 해링턴 스퀘어 리버파크 상가 분양 시기 최적화 분석</li>
+                </ul>
+            </div>
+        </section>
+
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Lee Seok-hwan. All rights reserved.</p>
+        <p style="margin-top: 10px; font-size: 0.8rem;">(주)허브파트너스 | 기획관리 차장</p>
+    </footer>
+
+</body>
+</html>
