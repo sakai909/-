@@ -1,0 +1,201 @@
+
+<style>
+  .ms-wrap { padding: 1.5rem 0; font-family: var(--font-mono); }
+  .ms-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+  .ms-stats { display: flex; gap: 16px; }
+  .ms-stat { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 6px 14px; font-size: 13px; color: var(--color-text-secondary); display: flex; align-items: center; gap: 6px; }
+  .ms-stat span { font-size: 15px; font-weight: 500; color: var(--color-text-primary); }
+  .ms-reset-btn { background: transparent; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 6px 14px; cursor: pointer; font-size: 13px; color: var(--color-text-primary); }
+  .ms-reset-btn:hover { background: var(--color-background-secondary); }
+  .ms-board { display: inline-grid; gap: 2px; background: var(--color-border-tertiary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md); padding: 2px; user-select: none; }
+  .ms-board-wrap { overflow-x: auto; }
+  .ms-cell { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 4px; background: var(--color-background-secondary); transition: background 0.1s; position: relative; }
+  .ms-cell:hover.unrevealed { background: var(--color-background-primary); border: 0.5px solid var(--color-border-secondary); }
+  .ms-cell.revealed { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); cursor: default; }
+  .ms-cell.flagged { background: var(--color-background-secondary); }
+  .ms-cell.mine-hit { background: #FCEBEB; }
+  .ms-cell.mine-shown { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); }
+  .n1 { color: #185FA5; } .n2 { color: #3B6D11; } .n3 { color: #993C1D; }
+  .n4 { color: #3C3489; } .n5 { color: #993556; } .n6 { color: #0F6E56; }
+  .n7 { color: #5F5E5A; } .n8 { color: #2C2C2A; }
+  .ms-message { margin-top: 1rem; padding: 10px 16px; border-radius: var(--border-radius-md); font-size: 14px; }
+  .ms-message.win { background: #EAF3DE; color: #3B6D11; }
+  .ms-message.lose { background: #FCEBEB; color: #A32D2D; }
+  .ms-diff { display: flex; gap: 8px; margin-bottom: 1rem; }
+  .ms-diff button { background: transparent; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 4px 12px; font-size: 12px; cursor: pointer; color: var(--color-text-secondary); }
+  .ms-diff button.active { background: var(--color-background-secondary); color: var(--color-text-primary); border-color: var(--color-border-primary); }
+</style>
+
+<div class="ms-wrap">
+  <h2 class="sr-only">지뢰찾기 게임</h2>
+  <div class="ms-diff" id="diffBtns">
+    <button class="active" onclick="setDiff(0)">쉬움 9×9</button>
+    <button onclick="setDiff(1)">보통 16×16</button>
+    <button onclick="setDiff(2)">어려움 16×30</button>
+  </div>
+  <div class="ms-header">
+    <div class="ms-stats">
+      <div class="ms-stat"><i class="ti ti-bomb" aria-hidden="true"></i><span id="mineCount">10</span></div>
+      <div class="ms-stat"><i class="ti ti-clock" aria-hidden="true"></i><span id="timer">0</span>s</div>
+      <div class="ms-stat"><i class="ti ti-flag" aria-hidden="true"></i><span id="flagCount">0</span></div>
+    </div>
+    <button class="ms-reset-btn" onclick="initGame()"><i class="ti ti-refresh" aria-hidden="true"></i> 새 게임</button>
+  </div>
+  <div class="ms-board-wrap">
+    <div class="ms-board" id="board"></div>
+  </div>
+  <div class="ms-message" id="message" style="display:none"></div>
+</div>
+
+<script>
+const DIFFS = [
+  { rows: 9, cols: 9, mines: 10 },
+  { rows: 16, cols: 16, mines: 40 },
+  { rows: 16, cols: 30, mines: 99 },
+];
+let diff = 0, rows, cols, totalMines;
+let board = [], revealed = [], flagged = [], minePos = new Set();
+let gameOver = false, firstClick = true, timerInterval = null, seconds = 0, flagsPlaced = 0;
+
+function setDiff(d) {
+  diff = d;
+  document.querySelectorAll('#diffBtns button').forEach((b, i) => b.classList.toggle('active', i === d));
+  initGame();
+}
+
+function initGame() {
+  clearInterval(timerInterval);
+  const cfg = DIFFS[diff];
+  rows = cfg.rows; cols = cfg.cols; totalMines = cfg.mines;
+  board = Array.from({length: rows}, () => Array(cols).fill(0));
+  revealed = Array.from({length: rows}, () => Array(cols).fill(false));
+  flagged = Array.from({length: rows}, () => Array(cols).fill(false));
+  minePos = new Set();
+  gameOver = false; firstClick = true; seconds = 0; flagsPlaced = 0;
+  document.getElementById('timer').textContent = '0';
+  document.getElementById('mineCount').textContent = totalMines;
+  document.getElementById('flagCount').textContent = '0';
+  document.getElementById('message').style.display = 'none';
+  renderBoard();
+}
+
+function placeMines(sr, sc) {
+  while (minePos.size < totalMines) {
+    const r = Math.floor(Math.random() * rows);
+    const c = Math.floor(Math.random() * cols);
+    if (Math.abs(r - sr) <= 1 && Math.abs(c - sc) <= 1) continue;
+    minePos.add(r * cols + c);
+  }
+  for (const pos of minePos) {
+    const r = Math.floor(pos / cols), c = pos % cols;
+    board[r][c] = -1;
+  }
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    if (board[r][c] === -1) continue;
+    let cnt = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === -1) cnt++;
+    }
+    board[r][c] = cnt;
+  }
+}
+
+function startTimer() {
+  timerInterval = setInterval(() => {
+    seconds++;
+    document.getElementById('timer').textContent = seconds;
+  }, 1000);
+}
+
+function reveal(r, c) {
+  if (r < 0 || r >= rows || c < 0 || c >= cols || revealed[r][c] || flagged[r][c]) return;
+  revealed[r][c] = true;
+  if (board[r][c] === 0) {
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) reveal(r + dr, c + dc);
+  }
+}
+
+function handleClick(r, c) {
+  if (gameOver || revealed[r][c] || flagged[r][c]) return;
+  if (firstClick) {
+    firstClick = false;
+    placeMines(r, c);
+    startTimer();
+  }
+  if (board[r][c] === -1) {
+    revealed[r][c] = true;
+    endGame(false, r, c);
+    return;
+  }
+  reveal(r, c);
+  checkWin();
+  renderBoard();
+}
+
+function handleRight(e, r, c) {
+  e.preventDefault();
+  if (gameOver || revealed[r][c]) return;
+  flagged[r][c] = !flagged[r][c];
+  flagsPlaced += flagged[r][c] ? 1 : -1;
+  document.getElementById('flagCount').textContent = flagsPlaced;
+  document.getElementById('mineCount').textContent = totalMines - flagsPlaced;
+  renderBoard();
+}
+
+function checkWin() {
+  let safe = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (revealed[r][c]) safe++;
+  if (safe === rows * cols - totalMines) endGame(true);
+}
+
+function endGame(win, hr, hc) {
+  gameOver = true;
+  clearInterval(timerInterval);
+  if (!win) {
+    for (const pos of minePos) {
+      const r = Math.floor(pos / cols), c = pos % cols;
+      revealed[r][c] = true;
+    }
+  }
+  renderBoard(win ? null : { r: hr, c: hc });
+  const msg = document.getElementById('message');
+  msg.style.display = 'block';
+  msg.className = 'ms-message ' + (win ? 'win' : 'lose');
+  msg.textContent = win ? `🎉 클리어! ${seconds}초 만에 성공했습니다!` : '💥 지뢰를 밟았습니다! 다시 도전해보세요.';
+}
+
+function renderBoard(hitCell) {
+  const el = document.getElementById('board');
+  el.style.gridTemplateColumns = `repeat(${cols}, 32px)`;
+  el.innerHTML = '';
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const cell = document.createElement('div');
+    cell.className = 'ms-cell';
+    const isHit = hitCell && hitCell.r === r && hitCell.c === c;
+    if (revealed[r][c]) {
+      if (board[r][c] === -1) {
+        cell.classList.add(isHit ? 'mine-hit' : 'mine-shown');
+        cell.textContent = '💣';
+      } else {
+        cell.classList.add('revealed');
+        if (board[r][c] > 0) {
+          cell.textContent = board[r][c];
+          cell.classList.add('n' + board[r][c]);
+        }
+      }
+    } else if (flagged[r][c]) {
+      cell.classList.add('flagged', 'unrevealed');
+      cell.textContent = '🚩';
+    } else {
+      cell.classList.add('unrevealed');
+    }
+    const rr = r, cc = c;
+    cell.addEventListener('click', () => handleClick(rr, cc));
+    cell.addEventListener('contextmenu', (e) => handleRight(e, rr, cc));
+    el.appendChild(cell);
+  }
+}
+
+initGame();
+</script>
